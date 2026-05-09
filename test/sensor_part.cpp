@@ -18,7 +18,8 @@ uint8_t receiverAddress[6];
 const char* path = "/myfile.txt";
 
 typedef struct struct_message {
-    float coord[30][2];
+    float coord[20][2];
+    uint32_t time[20];
     uint8_t count;
     uint8_t msgType;
 } struct_message;
@@ -26,32 +27,60 @@ typedef struct struct_message {
 struct_message incomingData;
 struct_message replyData;
 
-void addPairCoordinate (float x, float y, File &file) {
-  char string[25];
-  sprintf(string, "%.6f %.6f\n", x, y);
+typedef struct GPS_data
+{
+  float x;
+  float y;
+  uint32_t time;
+};
+
+
+//дописати розкладання часу (?)
+void addPairCoordinate (float x, float y, uint32_t time, File &file) {
+  char string[50];
+  sprintf(string, "%.6f %.6f %u\n", x, y, time);
   file.write((const uint8_t*)string, strlen(string));
 }
 
+//заглушка
 void create_data() {
   File file = LittleFS.open(path, "a");
   for (int i = 0; i < 85; i++) {
-    addPairCoordinate(i/0.33, i/0.73, file);
+    float x = i / 0.33;
+    float y = i / 0.73;
+
+    uint32_t s  = (i * 2) % 60;       // Секунди +2 кожну ітерацію
+    uint32_t m  = (i / 2) % 60;       // Хвилини +1 кожні дві ітерації
+    uint32_t h  = (i / 120) % 24;     // Години (майже не змінюються при 85 ітераціях)
+    uint32_t d  = 10;                 // Число (нехай буде 10-те)
+    uint32_t mo = 5;                  // Травень
+    uint32_t y_raw = 26;              // 2026 рік
+
+    uint32_t packedTime = 0;
+    packedTime |= (uint32_t)((y_raw - 26) & 0x3F) << 26; // Рік (26-26 = 0)
+    packedTime |= (mo & 0x0F) << 22;                     // Місяць
+    packedTime |= (d & 0x1F) << 17;                      // День
+    packedTime |= (h & 0x1F) << 12;                      // Година
+    packedTime |= (m & 0x3F) << 6;                       // Хвилина
+    packedTime |= (s & 0x3F);
+    
+    addPairCoordinate(x, y, packedTime, file);
   }
   file.close();
   Serial.println("Data created");
 }
 
-std::vector<std::pair<float, float>> getAllCoordinate() {
-  std::vector<std::pair<float, float>> coordinate_vec;
+std::vector<GPS_data> getAllCoordinate() {
+  std::vector<GPS_data> coordinate_vec;
   float x, y;
+  uint32_t time;
   File file = LittleFS.open(path, "r");
   while (file.available()) {
     String iter_str = file.readStringUntil('\n');
     iter_str.trim();  //
     if (iter_str.length() == 0) continue;  //
-    sscanf(iter_str.c_str(), "%f %f", &x, &y);
-    std::pair<float, float> iter_pair = {x, y};
-    coordinate_vec.push_back(iter_pair);
+    sscanf(iter_str.c_str(), "%f %f %u", &x, &y, &time);
+    coordinate_vec.push_back({x, y, time});
   }
   file.close();
   file = LittleFS.open(path, "w");
@@ -60,16 +89,17 @@ std::vector<std::pair<float, float>> getAllCoordinate() {
 }
 
 void cutSendData() {
-  std::vector<std::pair<float, float>> coord = getAllCoordinate();
+  std::vector<GPS_data> data_for_send = getAllCoordinate();
   Serial.println("Data read complete");
-  while (!coord.empty() && sendPermition) {
-    unsigned char packetSize = (coord.size() >= 30) ? 30 : coord.size();
+  while (!data_for_send.empty() && sendPermition) {
+    unsigned char packetSize = (data_for_send.size() >= 20) ? 20 : data_for_send.size();
     memset(&replyData, 0, sizeof(replyData));
     replyData.count = packetSize;
     replyData.msgType = MSG_DATA;
     for (int i = 0; i < packetSize; i++) {
-      replyData.coord[i][0] = coord[i].first;
-      replyData.coord[i][1] = coord[i].second;
+      replyData.coord[i][0] = data_for_send[i].x;
+      replyData.coord[i][1] = data_for_send[i].y;
+      replyData.time[i] = data_for_send[i].time;
     }
 
     deliveryFinished = false;
@@ -87,7 +117,7 @@ void cutSendData() {
     }
 
     if (deliverySuccess) {
-      coord.erase(coord.begin(), coord.begin() + packetSize);
+      data_for_send.erase(data_for_send.begin(), data_for_send.begin() + packetSize);
       Serial.println("Erased data");
     } else {
       Serial.println("Not respond");
@@ -96,11 +126,11 @@ void cutSendData() {
     delay(20);
   }
   
-  if (!coord.empty()) {
+  if (!data_for_send.empty()) {
     File file = LittleFS.open(path, "a");
     if (file) {
-      for (const auto& p : coord) {
-        addPairCoordinate(p.first, p.second, file);
+      for (const auto& p : data_for_send) {
+        addPairCoordinate(p.x, p.y, p.time, file);
       }
       file.close();
     }

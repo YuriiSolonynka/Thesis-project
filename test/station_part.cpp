@@ -27,7 +27,8 @@
 const char* path = "/myfile.txt";
 
 typedef struct struct_message {
-    float coord[30][2];
+    float coord[20][2];
+    uint32_t time[20];
     uint8_t count;
     uint8_t msgType;
 } struct_message;
@@ -78,6 +79,7 @@ void print_wakeup_reason(){
   }
 }
 
+//секція буфера
 void init_buffer(CircularBuffer *cb) {
     cb->head = 0;
     cb->tail = 0;
@@ -211,7 +213,15 @@ void loop() {
     File file = LittleFS.open(path, "a");
     
     if (file) {
-      char string[25];
+      char string[50];
+      /*  coord 1 = 11 + 1
+          coord 2 = 11 + 1
+          time = 8 + 1
+          date = 8
+          \n = 1
+          \0 = 1
+          50 > 43
+      */
       
       while (!buffer_is_empty(&cb)) {
         
@@ -223,7 +233,14 @@ void loop() {
           for (int i = 0; i < savingData.count; i++){
             float x = savingData.coord[i][0];
             float y = savingData.coord[i][1];
-            sprintf(string, "%.6f %.6f\n", x, y);
+            uint32_t time = savingData.time[i];
+            uint8_t second = time & 0x3F; // 6
+            uint8_t minute = (time >> 6) & 0x3F; // 6
+            uint8_t hour = (time >> 12) & 0x1F; // 5
+            uint8_t day = (time >> 17) & 0x1F; // 5
+            uint8_t month = (time >> 22) & 0x0F; // 4
+            uint8_t year = ((time >> 26) & 0x3F) + 26; // 6 (26 це рік щоб помістити діапазон 26 - 89 рік)
+            sprintf(string, "%.6f %.6f %u:%u:%u %u/%u/%u\n", x, y, hour, minute, second, day, month, year);
             file.write((const uint8_t*)string, strlen(string));
           }
         }
